@@ -10,6 +10,7 @@ type Config = {
   mcpPort: number;
   nodeVersion: string;
   ignoredPaths: string[];
+  useGitIgnore?: boolean;
 };
 
 export function Settings() {
@@ -42,7 +43,8 @@ export function Settings() {
     try {
       await post('/config', {
         projectRoot: formData.projectRoot,
-        ignoredPaths: formData.ignoredPaths
+        ignoredPaths: formData.ignoredPaths,
+        useGitIgnore: formData.useGitIgnore
       });
       setIsEditing(false);
       showToast('Configuration saved successfully', 'success');
@@ -139,6 +141,25 @@ export function Settings() {
         <Card>
           <CardHeader title="Security & Scope" icon={Shield} />
           <CardContent className="space-y-4">
+            <div className="flex items-center gap-3 p-4 bg-white/5 rounded-lg border border-white/10">
+              <input
+                type="checkbox"
+                id="useGitIgnore"
+                checked={isEditing ? (formData.useGitIgnore ?? true) : (config?.useGitIgnore ?? true)}
+                onChange={e => setFormData({...formData, useGitIgnore: e.target.checked})}
+                disabled={!isEditing}
+                className="w-4 h-4 rounded border-gray-600 bg-black/20 text-[var(--color-accent)] focus:ring-[var(--color-accent)] cursor-pointer"
+              />
+              <div className="flex-1">
+                <label htmlFor="useGitIgnore" className={`text-sm font-medium ${isEditing ? 'cursor-pointer text-white' : 'text-gray-300'}`}>
+                  Respect .gitignore
+                </label>
+                <p className="text-xs text-gray-500">
+                  Automatically exclude files listed in .gitignore from indexing and analysis.
+                </p>
+              </div>
+            </div>
+
             <div className="p-4 bg-white/5 rounded-lg border border-white/10">
               <p className="text-sm font-medium text-gray-300 mb-3">Ignored Paths</p>
               
