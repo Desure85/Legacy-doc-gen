@@ -5,11 +5,7 @@ services:
     build: .
     ports:
       - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
     environment:
       - PORT=3000
       # - GEMINI_API_KEY=...
       # - QDRANT_URL=...
-    command: npm run dev # Use dev for hot-reload in development
