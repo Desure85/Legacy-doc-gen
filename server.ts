@@ -22,6 +22,15 @@ const mcpServer = new McpServer({
 // Middleware to parse JSON bodies
 app.use(express.json());
 
+// Add permissive CSP middleware
+app.use((req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000 https://generativelanguage.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com;"
+  );
+  next();
+});
+
 // In-memory store for job statuses (simulated database)
 const jobs: Record<string, { 
   id: string; 
