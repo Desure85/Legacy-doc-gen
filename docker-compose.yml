@@ -1,52 +1,15 @@
 version: '3.8'
 
 services:
-  # ==============================================================================
-  # 1. DocuGen MCP Server & Control Panel
-  # ==============================================================================
-  mcp-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: docugen-mcp
+  docugen-mcp:
+    build: .
     ports:
       - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
     environment:
-      - NODE_ENV=production
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      # Point to your legacy PHP monolith repository
-      - CODEBASE_PATH=/app/repo
-    volumes:
-      # Mount your legacy codebase here so the MCP server can read/index it
-      - ./path/to/your/php/monolith:/app/repo:ro
-      # Local SQLite metadata storage
-      - mcp_data:/app/data
-    depends_on:
-      - qdrant
-    restart: unless-stopped
-
-  # ==============================================================================
-  # 2. Vector Database: Qdrant
-  # ==============================================================================
-  # Why Qdrant for a 1M LOC PHP monolith?
-  # - 1M LOC ≈ 50k-100k chunks (depending on chunk size).
-  # - Qdrant handles this effortlessly in memory/disk.
-  # - Crucial feature: Payload filtering. We can tag vectors with:
-  #   {"module": "admin", "lang": "php", "type": "controller"}
-  #   This allows the agent to search *only* the admin panel or *only* React code.
-  # ==============================================================================
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: docugen-qdrant
-    ports:
-      - "6333:6333" # REST API
-      - "6334:6334" # gRPC
-    volumes:
-      - qdrant_storage:/qdrant/storage
-    restart: unless-stopped
-
-volumes:
-  mcp_data:
-  qdrant_storage:
+      - PORT=3000
+      # - GEMINI_API_KEY=...
+      # - QDRANT_URL=...
+    command: npm run dev # Use dev for hot-reload in development
