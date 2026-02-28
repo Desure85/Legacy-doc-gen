@@ -1,6 +1,8 @@
-import { useState } from 'react';
-import { BrainCircuit, MessageSquare, Check, ChevronRight, Sparkles, FileCode2, Database, Network, TerminalSquare, Server } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { BrainCircuit, MessageSquare, Check, ChevronRight, Sparkles, FileCode2, Database, Network, TerminalSquare, Server, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, Button, Badge } from '../components/ui';
+import { DiscoveryService } from '../services/discoveryService';
+import { useToast } from '../components/ToastContext';
 
 type DiscoveryStep = {
   id: string;
@@ -14,6 +16,9 @@ type DiscoveryStep = {
 export function Discovery() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   const steps: DiscoveryStep[] = [
     {
@@ -27,7 +32,7 @@ export function Discovery() {
     {
       id: 'architecture',
       title: 'Architecture Pattern Recognition',
-      description: 'Detecting Yii2 structure: ActiveRecords, Behaviors, Modules, and mixed raw SQL/Query Builder usage.',
+      description: 'Auto-detecting framework (Yii2/Laravel/Symfony), folder structure, and architectural layers (Monolith vs Microservices).',
       status: currentStep > 1 ? 'completed' : currentStep === 1 && isDiscovering ? 'active' : 'pending',
       icon: Network,
       executor: 'MCP Server'
@@ -35,7 +40,7 @@ export function Discovery() {
     {
       id: 'semantic-discovery',
       title: 'Semantic Domain Discovery',
-      description: 'Executing the "Yii2 Module Discovery" prompt. The LLM uses MCP tools to find implicit domains.',
+      description: 'Executing the "Stack-Agnostic Discovery" prompt. The LLM identifies business domains regardless of the underlying tech.',
       status: currentStep > 2 ? 'completed' : currentStep === 2 && isDiscovering ? 'active' : 'pending',
       icon: BrainCircuit,
       executor: 'IDE Agent'
@@ -43,29 +48,68 @@ export function Discovery() {
     {
       id: 'data-models',
       title: 'Data Model Mapping',
-      description: 'Analyzing Yii2 ActiveRecords, DAO (raw SQL), and Query Builder calls to understand data flow.',
+      description: 'Tracing data flow from database schemas (SQL/Migrations) to API endpoints and frontend consumers.',
       status: currentStep > 3 ? 'completed' : currentStep === 3 && isDiscovering ? 'active' : 'pending',
       icon: Database,
       executor: 'MCP Server'
     }
   ];
 
-  const handleStartDiscovery = () => {
+  const handleStartDiscovery = async () => {
     setIsDiscovering(true);
     setCurrentStep(0);
-    
-    // Simulate discovery process
-    const interval = setInterval(() => {
-      setCurrentStep(prev => {
-        if (prev >= steps.length - 1) {
-          clearInterval(interval);
-          setIsDiscovering(false);
+    setError(null);
+    showToast('Starting project discovery...', 'info');
+
+    try {
+      // 1. Try to call the real backend
+      const response = await DiscoveryService.start();
+      setJobId(response.jobId);
+    } catch (err) {
+      // 2. Fallback for Preview/Demo mode if backend is unreachable
+      console.warn("Backend unreachable, falling back to simulation mode");
+      setError("Backend connection failed. Running in Simulation Mode.");
+      showToast('Backend unreachable. Running in Simulation Mode.', 'warning');
+      
+      // Simulate discovery process
+      const interval = setInterval(() => {
+        setCurrentStep(prev => {
+          if (prev >= steps.length - 1) {
+            clearInterval(interval);
+            setIsDiscovering(false);
+            showToast('Discovery completed (Simulated)', 'success');
+            return prev + 1;
+          }
           return prev + 1;
-        }
-        return prev + 1;
-      });
-    }, 2000);
+        });
+      }, 2000);
+    }
   };
+
+  // Poll for status if we have a real Job ID
+  useEffect(() => {
+    if (!jobId || !isDiscovering) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await DiscoveryService.getStatus(jobId);
+        setCurrentStep(status.currentStep);
+        if (!status.isRunning) {
+          setIsDiscovering(false);
+          showToast('Discovery completed successfully', 'success');
+          clearInterval(pollInterval);
+        }
+      } catch (err) {
+        console.error("Failed to poll status", err);
+        setError("Lost connection to backend.");
+        showToast('Lost connection to backend', 'error');
+        setIsDiscovering(false);
+        clearInterval(pollInterval);
+      }
+    }, 1000);
+
+    return () => clearInterval(pollInterval);
+  }, [jobId, isDiscovering]);
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -97,11 +141,18 @@ export function Discovery() {
           ) : (
             <>
               <Sparkles className="w-4 h-4" />
-              Initialize Discovery
+              Start Auto-Discovery
             </>
           )}
         </Button>
       </header>
+
+      {error && (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4 flex items-center gap-3 text-amber-200">
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <p className="text-sm">{error}</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Discovery Pipeline */}
@@ -208,9 +259,9 @@ export function Discovery() {
                       </div>
                       <div>
                         <p className="text-sm text-gray-300 bg-white/5 p-3 rounded-lg rounded-tl-none border border-white/10">
-                          I noticed billing logic is split between Yii2 ActiveRecords (<code className="text-[var(--color-accent)] bg-[var(--color-accent)]/10 px-1 rounded">common/models/Payment.php</code>), console commands (<code className="text-[var(--color-accent)] bg-[var(--color-accent)]/10 px-1 rounded">console/controllers/BillingController.php</code>), and the new React frontend.
+                          I've detected multiple distinct applications in the repository: a legacy backend (<code className="text-[var(--color-accent)] bg-[var(--color-accent)]/10 px-1 rounded">/backend</code>) and a separate modern frontend (<code className="text-[var(--color-accent)] bg-[var(--color-accent)]/10 px-1 rounded">/frontend-app</code>).
                           <br/><br/>
-                          Should I document the legacy Gii-generated CRUD views in <code className="text-[var(--color-accent)] bg-[var(--color-accent)]/10 px-1 rounded">backend/views/payment</code>, or focus only on the REST API?
+                          The "Billing" domain logic seems to be duplicated across both. Should I treat them as a single system or document them as separate services?
                         </p>
                       </div>
                     </div>
@@ -221,7 +272,7 @@ export function Discovery() {
                       </div>
                       <div>
                         <p className="text-sm text-white bg-blue-500/20 p-3 rounded-lg rounded-tr-none border border-blue-500/30">
-                          Focus on the API and React. The Gii-generated views in backend are for internal admins only, but we are moving them to React too.
+                          Treat them as separate. The backend is the source of truth, the frontend is just a consumer. Focus on the API contract between them.
                         </p>
                       </div>
                     </div>
@@ -232,7 +283,7 @@ export function Discovery() {
                       </div>
                       <div>
                         <p className="text-sm text-gray-400 italic bg-white/5 p-3 rounded-lg rounded-tl-none border border-white/10">
-                          Action: Calling tool <code className="text-[var(--color-accent)]">save_architectural_decision</code> with context "Billing views in /admin_html are deprecated. Focus on API + React."
+                          Action: Calling tool <code className="text-[var(--color-accent)]">save_architectural_decision</code> with context "Separate services. Document API contract as the boundary."
                         </p>
                       </div>
                     </div>

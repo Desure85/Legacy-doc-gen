@@ -1,15 +1,26 @@
 import { useState } from 'react';
-import { LayoutDashboard, Database, Terminal, FileText, Settings, Menu, X, BrainCircuit, Network } from 'lucide-react';
+import { LayoutDashboard, Database, Terminal, FileText, Settings as SettingsIcon, Menu, X, BrainCircuit, Network, ScrollText } from 'lucide-react';
 import { Dashboard } from './pages/Dashboard';
 import { Prompts } from './pages/Prompts';
 import { Tasks } from './pages/Tasks';
 import { Docs } from './pages/Docs';
 import { Discovery } from './pages/Discovery';
 import { ArchitectureMap } from './pages/ArchitectureMap';
+import { Settings } from './pages/Settings';
+import { Logs } from './pages/Logs';
+import { ToastProvider } from './components/ToastContext';
 
-type Page = 'dashboard' | 'discovery' | 'architecture' | 'prompts' | 'tasks' | 'docs';
+type Page = 'dashboard' | 'discovery' | 'architecture' | 'prompts' | 'tasks' | 'docs' | 'settings' | 'logs';
 
 export default function App() {
+  return (
+    <ToastProvider>
+      <AppContent />
+    </ToastProvider>
+  );
+}
+
+function AppContent() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -20,6 +31,7 @@ export default function App() {
     { id: 'prompts', label: 'MCP Prompts', icon: Terminal },
     { id: 'tasks', label: 'Agent Tasks', icon: Database },
     { id: 'docs', label: 'Generated Docs', icon: FileText },
+    { id: 'logs', label: 'System Logs', icon: ScrollText },
   ];
 
   const handleNavClick = (id: Page) => {
@@ -90,8 +102,15 @@ export default function App() {
         </nav>
 
         <div className="p-4 border-t border-[var(--color-border)]">
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white transition-colors">
-            <Settings className="w-4 h-4" />
+          <button 
+            onClick={() => handleNavClick('settings')}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              currentPage === 'settings'
+                ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+                : 'text-gray-400 hover:bg-white/5 hover:text-white'
+            }`}
+          >
+            <SettingsIcon className="w-4 h-4" />
             Settings
           </button>
         </div>
@@ -107,6 +126,8 @@ export default function App() {
           {currentPage === 'prompts' && <Prompts />}
           {currentPage === 'tasks' && <Tasks />}
           {currentPage === 'docs' && <Docs />}
+          {currentPage === 'settings' && <Settings />}
+          {currentPage === 'logs' && <Logs />}
         </div>
       </main>
     </div>

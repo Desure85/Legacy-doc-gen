@@ -1,7 +1,16 @@
-import { Activity, Database, FileCode2, Layers, Search, Zap, GitBranch, GitCommit, RefreshCw } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Activity, Database, FileCode2, Layers, Search, Zap, GitBranch, GitCommit, RefreshCw, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, Badge, Button } from '../components/ui';
+import { DiscoveryService } from '../services/discoveryService';
+import { useToast } from '../components/ToastContext';
 
 export function Dashboard() {
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(0);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncJobId, setSyncJobId] = useState<string | null>(null);
+  const { showToast } = useToast();
+
   const stats = [
     { label: 'Indexed Files', value: '1,248', icon: FileCode2, trend: '+12 this week' },
     { label: 'Vector Embeddings', value: '45.2k', icon: Database, trend: 'Using text-embedding-3-small' },
@@ -15,6 +24,59 @@ export function Dashboard() {
     { id: 3, action: 'Detected drift (main)', target: '3 files out of sync', time: '3 hours ago', status: 'warning' },
     { id: 4, action: 'Agent Task Failed', target: 'Legacy Auth', time: '1 day ago', status: 'error' },
   ];
+
+  const handleSyncIndex = async () => {
+    setIsSyncing(true);
+    setSyncProgress(0);
+    setSyncError(null);
+    showToast('Starting index synchronization...', 'info');
+
+    try {
+      const response = await DiscoveryService.syncIndex();
+      setSyncJobId(response.jobId);
+    } catch (err) {
+      console.warn("Backend unreachable, falling back to simulation mode");
+      setSyncError("Backend connection failed. Running in Simulation Mode.");
+      showToast('Backend unreachable. Running in Simulation Mode.', 'warning');
+      
+      // Simulation fallback
+      const interval = setInterval(() => {
+        setSyncProgress(prev => {
+          if (prev >= 100) {
+            clearInterval(interval);
+            setIsSyncing(false);
+            showToast('Index synchronization completed (Simulated)', 'success');
+            return 100;
+          }
+          return prev + 5;
+        });
+      }, 500);
+    }
+  };
+
+  useEffect(() => {
+    if (!syncJobId || !isSyncing) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await DiscoveryService.getIndexStatus(syncJobId);
+        setSyncProgress(status.progress);
+        if (!status.isSyncing) {
+          setIsSyncing(false);
+          showToast('Index synchronization completed', 'success');
+          clearInterval(pollInterval);
+        }
+      } catch (err) {
+        console.error("Failed to poll status", err);
+        setSyncError("Lost connection to backend.");
+        showToast('Lost connection to backend during sync', 'error');
+        setIsSyncing(false);
+        clearInterval(pollInterval);
+      }
+    }, 1000);
+
+    return () => clearInterval(pollInterval);
+  }, [syncJobId, isSyncing]);
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -32,13 +94,31 @@ export function Dashboard() {
               <option value="hotfix/auth">hotfix/auth</option>
             </select>
           </div>
-          <Badge variant="warning">Syncing (45%)</Badge>
-          <Button variant="outline" className="text-xs py-1.5 h-auto whitespace-nowrap">
-            <RefreshCw className="w-3 h-3 mr-1" />
-            Sync Index
+          
+          {isSyncing && (
+            <Badge variant="warning" className="animate-pulse">
+              Syncing ({syncProgress}%)
+            </Badge>
+          )}
+
+          <Button 
+            variant="outline" 
+            className="text-xs py-1.5 h-auto whitespace-nowrap"
+            onClick={handleSyncIndex}
+            disabled={isSyncing}
+          >
+            <RefreshCw className={`w-3 h-3 mr-1 ${isSyncing ? 'animate-spin' : ''}`} />
+            {isSyncing ? 'Syncing...' : 'Sync Index'}
           </Button>
         </div>
       </header>
+
+      {syncError && (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4 flex items-center gap-3 text-amber-200">
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <p className="text-sm">{syncError}</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((stat, i) => (
