@@ -1,0 +1,5 @@
+{
+  "name": "DocGen MCP Server Control Panel",
+  "description": "A control panel for an MCP server that guides an IDE agent to generate project documentation using semantic search and sub-prompts.",
+  "requestFramePermissions": []
+}
