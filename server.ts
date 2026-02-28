@@ -4,6 +4,10 @@ import simpleGit from 'simple-git';
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import ignore from 'ignore';
 
 const app = express();
 const PORT = 3000;
@@ -63,7 +67,8 @@ let prompts = [
 // In-memory store for config
 let systemConfig = {
   projectRoot: process.cwd(),
-  ignoredPaths: ['node_modules', 'dist', '.git', '.env']
+  ignoredPaths: ['node_modules', 'dist', '.git', '.env', '.DS_Store'],
+  useGitIgnore: true
 };
 
 // Helper to generate IDs
@@ -85,45 +90,78 @@ function log(level: 'info' | 'warn' | 'error', message: string) {
   console.log(`[${level.toUpperCase()}] ${message}`);
 }
 
+// --- GitIgnore Helper ---
+async function getIgnoreFilter(root: string) {
+  const ig = ignore();
+  
+  // Always ignore system defaults
+  ig.add(systemConfig.ignoredPaths);
+
+  if (systemConfig.useGitIgnore) {
+    try {
+      const gitignorePath = path.join(root, '.gitignore');
+      const gitignoreContent = await fs.readFile(gitignorePath, 'utf-8');
+      ig.add(gitignoreContent);
+      log('info', 'Loaded .gitignore rules');
+    } catch (e) {
+      // No .gitignore found, or error reading it
+      // log('info', 'No .gitignore found or could not be read');
+    }
+  }
+  
+  return ig;
+}
+
 // --- MCP Tools Implementation ---
 
-mcpServer.tool(
-  "analyze_architecture",
-  "Analyze the project architecture and identify key components.",
-  {
-    path: z.string().optional().describe("Path to analyze (defaults to project root)")
-  },
-  async ({ path }) => {
-    log('info', `MCP Tool called: analyze_architecture (path: ${path || 'root'})`);
-    // Simulate analysis
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          stack: "Detected: Node.js + React (Vite)",
-          patterns: ["MVC", "Component-Based"],
-          recommendations: ["Refactor monolithic components", "Add API documentation"]
-        }, null, 2)
-      }]
-    };
+// Helper to resolve path safely
+function resolvePath(relativePath: string) {
+  const resolved = path.resolve(systemConfig.projectRoot, relativePath);
+  if (!resolved.startsWith(systemConfig.projectRoot)) {
+    throw new Error("Access denied: Path is outside project root");
   }
-);
+  return resolved;
+}
 
 mcpServer.tool(
-  "search_codebase",
-  "Search the codebase for specific patterns or keywords.",
+  "list_directory",
+  "List files and directories at a specific path.",
   {
-    query: z.string().describe("Search query or regex pattern")
+    path: z.string().optional().describe("Relative path to list (defaults to root)")
   },
-  async ({ query }) => {
-    log('info', `MCP Tool called: search_codebase (query: ${query})`);
-    // Simulate search
-    return {
-      content: [{
-        type: "text",
-        text: `Found 3 matches for "${query}":\n1. src/server.ts:10\n2. src/App.tsx:25\n3. README.md:5`
-      }]
-    };
+  async ({ path: relativePath }) => {
+    const targetPath = resolvePath(relativePath || '.');
+    log('info', `MCP Tool called: list_directory (path: ${relativePath || 'root'})`);
+    
+    try {
+      const ig = await getIgnoreFilter(systemConfig.projectRoot);
+      const entries = await fs.readdir(targetPath, { withFileTypes: true });
+      
+      const result = entries
+        .filter(entry => {
+          const relativeEntryPath = path.relative(systemConfig.projectRoot, path.join(targetPath, entry.name));
+          // Check if ignored by .gitignore or system defaults
+          // Note: ignore package expects relative paths
+          return !ig.ignores(relativeEntryPath);
+        })
+        .map(entry => ({
+          name: entry.name,
+          type: entry.isDirectory() ? 'directory' : 'file'
+        }));
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }]
+      };
+    } catch (error: any) {
+      log('error', `Failed to list directory: ${error.message}`);
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error: ${error.message}` }]
+      };
+    }
   }
 );
 
@@ -133,13 +171,127 @@ mcpServer.tool(
   {
     path: z.string().describe("Relative path to the file")
   },
-  async ({ path }) => {
-    log('info', `MCP Tool called: read_file (path: ${path})`);
-    // Simulate read (in real implementation, use fs)
+  async ({ path: relativePath }) => {
+    const targetPath = resolvePath(relativePath);
+    log('info', `MCP Tool called: read_file (path: ${relativePath})`);
+    
+    try {
+      // Check ignore rules first
+      const ig = await getIgnoreFilter(systemConfig.projectRoot);
+      if (ig.ignores(relativePath)) {
+        throw new Error("File is ignored by configuration");
+      }
+
+      const content = await fs.readFile(targetPath, 'utf-8');
+      return {
+        content: [{
+          type: "text",
+          text: content
+        }]
+      };
+    } catch (error: any) {
+      log('error', `Failed to read file: ${error.message}`);
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error: ${error.message}` }]
+      };
+    }
+  }
+);
+
+mcpServer.tool(
+  "analyze_architecture",
+  "Analyze the project architecture by reading key config files.",
+  {
+    path: z.string().optional().describe("Path to analyze (defaults to project root)")
+  },
+  async ({ path: relativePath }) => {
+    log('info', `MCP Tool called: analyze_architecture`);
+    const root = resolvePath(relativePath || '.');
+    
+    const findings: any = {
+      stack: [],
+      configs: []
+    };
+
+    try {
+      const files = await fs.readdir(root);
+      
+      if (files.includes('package.json')) {
+        findings.stack.push('Node.js');
+        const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf-8'));
+        findings.configs.push('package.json');
+        if (pkg.dependencies?.react) findings.stack.push('React');
+        if (pkg.dependencies?.vue) findings.stack.push('Vue');
+        if (pkg.dependencies?.express) findings.stack.push('Express');
+      }
+      
+      if (files.includes('composer.json')) {
+        findings.stack.push('PHP');
+        findings.configs.push('composer.json');
+        const composer = JSON.parse(await fs.readFile(path.join(root, 'composer.json'), 'utf-8'));
+        if (composer.require?.['laravel/framework']) findings.stack.push('Laravel');
+        if (composer.require?.['yiisoft/yii2']) findings.stack.push('Yii2');
+      }
+
+      if (files.includes('Dockerfile')) findings.stack.push('Docker');
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(findings, null, 2)
+        }]
+      };
+    } catch (error: any) {
+       return {
+        isError: true,
+        content: [{ type: "text", text: `Error analyzing architecture: ${error.message}` }]
+      };
+    }
+  }
+);
+
+mcpServer.tool(
+  "search_codebase",
+  "Search the codebase for specific text patterns (simple grep).",
+  {
+    query: z.string().describe("Text to search for")
+  },
+  async ({ query }) => {
+    log('info', `MCP Tool called: search_codebase (query: ${query})`);
+    
+    const results: string[] = [];
+    const ig = await getIgnoreFilter(systemConfig.projectRoot);
+    
+    async function searchDir(dir: string) {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        const relativePath = path.relative(systemConfig.projectRoot, fullPath);
+
+        if (ig.ignores(relativePath)) continue;
+        
+        if (entry.isDirectory()) {
+          await searchDir(fullPath);
+        } else {
+          try {
+            const content = await fs.readFile(fullPath, 'utf-8');
+            if (content.includes(query)) {
+              results.push(`Found in ${relativePath}`);
+            }
+          } catch (e) {
+            // Ignore binary files or read errors
+          }
+        }
+      }
+    }
+
+    await searchDir(systemConfig.projectRoot);
+
     return {
       content: [{
         type: "text",
-        text: `(Content of ${path} would be here)`
+        text: results.length > 0 ? results.join('\n') : "No matches found."
       }]
     };
   }
@@ -190,9 +342,11 @@ app.delete('/api/prompts/:id', (req, res) => {
 
 // --- Config API ---
 app.post('/api/config', (req, res) => {
-  const { projectRoot, ignoredPaths } = req.body;
+  const { projectRoot, ignoredPaths, useGitIgnore } = req.body;
   if (projectRoot) systemConfig.projectRoot = projectRoot;
   if (ignoredPaths) systemConfig.ignoredPaths = ignoredPaths;
+  if (useGitIgnore !== undefined) systemConfig.useGitIgnore = useGitIgnore;
+  
   log('info', 'Updated system configuration');
   res.json({ success: true, config: systemConfig });
 });
@@ -293,7 +447,8 @@ app.get('/api/config', async (req, res) => {
     gitBranch: branch,
     mcpPort: PORT,
     nodeVersion: process.version,
-    ignoredPaths: systemConfig.ignoredPaths
+    ignoredPaths: systemConfig.ignoredPaths,
+    useGitIgnore: systemConfig.useGitIgnore
   });
 });
 
@@ -346,28 +501,20 @@ function simulateSyncProcess(jobId: string) {
 }
 
 // --- MCP SSE Transport Setup ---
+let transport: SSEServerTransport | null = null;
+
 app.get('/sse', async (req, res) => {
   log('info', 'New MCP SSE connection established');
-  const transport = new SSEServerTransport("/messages", res);
+  transport = new SSEServerTransport("/messages", res);
   await mcpServer.connect(transport);
 });
 
 app.post('/messages', async (req, res) => {
-  // Note: In a real implementation, you'd need to handle message routing to the correct transport instance.
-  // For simplicity in this single-process demo, we assume one active transport or handle it globally.
-  // However, SSEServerTransport.handlePostMessage expects the request and response objects directly.
-  // We need to find the active transport for this session, but SSEServerTransport is designed for 1:1.
-  // A robust implementation would map session IDs.
-  // For this demo, we'll just acknowledge the endpoint exists.
-  // The SDK's SSEServerTransport handles the POST internally if we pass the request to it?
-  // Actually, the SDK documentation suggests:
-  // transport.handlePostMessage(req, res);
-  
-  // Since we can't easily access the specific transport instance created in /sse (scope issue),
-  // we might need a global map or a slightly different architecture.
-  // But for now, let's just log it.
-  log('info', 'Received MCP message');
-  res.sendStatus(200);
+  if (transport) {
+    await transport.handlePostMessage(req, res);
+  } else {
+    res.status(400).json({ error: "No active transport connection" });
+  }
 });
 
 // --- Vite Middleware Setup ---
